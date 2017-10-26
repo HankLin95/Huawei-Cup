@@ -1,0 +1,168 @@
+#include "mainwindow.h"
+#include "ui_mainwindow.h"
+#include <QTextCodec>
+#include <QMessageBox>
+MainWindow::MainWindow(QWidget *parent) :
+    QMainWindow(parent),
+    ui(new Ui::MainWindow)
+{
+    ui->setupUi(this);
+    this->robot=NULL;
+    server =new QTcpServer(this);
+    server->listen(QHostAddress::Any,8088);
+    connect(server,SIGNAL(newConnection()),this,SLOT(newSocketConnection()));
+    connect(ui->pushButton_send,SIGNAL(clicked()),this,SLOT(send_slot()));
+    table_id=0;
+}
+
+MainWindow::~MainWindow()
+{
+    delete ui;
+    serial->close();
+}
+
+void MainWindow::read_com() //读串口函数
+{
+    QByteArray temp = serial->readAll();
+    //读取串口缓冲区的所有数据给临时变量temp
+    QTextCodec::setCodecForCStrings(QTextCodec::codecForName("GB2312"));
+    qDebug("%d",temp.length());
+    if(temp.length()==13)
+    {
+        ui->textEdit->append(temp.toHex());
+        char *temp_c=new char[27];
+        temp_c=temp.toHex().data();
+        char dev[3]={0};
+        int j=0;
+        for(int i=24;i<=25;i++)//7-10是设备号
+        {
+            dev[j++]=temp_c[i];
+        }
+        QTextCodec::setCodecForCStrings(QTextCodec::codecForName("UTF-8"));
+        qDebug("节点号是：%s",dev);
+        table_id=atoi(dev);
+        qDebug("%d",table_id);
+        QString mes =QString(dev).append("号桌请求服务");
+        QMessageBox::information(0,"服务请求",mes);
+    }
+//将串口的数据显示在窗口的文本浏览器中
+}
+
+void MainWindow::on_pushButton_clicked()
+{
+    struct PortSettings myComSetting = {BAUD9600,DATA_8,PAR_NONE,STOP_1,FLOW_OFF,500};
+    //定义一个结构体，用来存放串口各个参数
+    serial = new Win_QextSerialPort("com3",myComSetting,QextSerialBase::EventDriven);
+    //定义串口对象，并传递参数，在构造函数里对其进行初始化
+    serial ->open(QIODevice::ReadWrite);
+     QString str("7E 42 C0 FF 00 FF 00 7E") ;
+    QByteArray senddata;
+    QstringToQbtyedata(str,senddata);
+     serial->write(senddata);
+     qDebug(senddata);
+    //以可读写方式打开串口
+    connect(serial,SIGNAL(readyRead()),this,SLOT(read_com()));
+}
+
+void MainWindow::QstringToQbtyedata(QString str,QByteArray& senddata)
+{
+    int hexdata,lowhexdata;
+    int hexdatalen = 0;
+    int len = str.length();
+    senddata.resize(len/2);
+    char lstr,hstr;
+    for(int i=0; i<len; )
+    {
+        //char lstr,
+        hstr=str[i].toAscii();
+        if(hstr == ' ')
+        {
+            i++;
+            continue;
+        }
+        i++;
+        if(i >= len)
+            break;
+        lstr = str[i].toAscii();
+        hexdata = ConvertHexChar(hstr);
+        lowhexdata = ConvertHexChar(lstr);
+        if((hexdata == 16) || (lowhexdata == 16))
+            break;
+        else
+            hexdata = hexdata*16+lowhexdata;
+        i++;
+        senddata[hexdatalen] = (char)hexdata;
+        hexdatalen++;
+    }
+    senddata.resize(hexdatalen);
+}
+
+char MainWindow::ConvertHexChar(char ch)
+{
+    if((ch >= '0') && (ch <= '9'))
+        return ch-0x30;
+    else if((ch >= 'A') && (ch <= 'F'))
+        return ch-'A'+10;
+    else if((ch >= 'a') && (ch <= 'f'))
+        return ch-'a'+10;
+    else return (-1);
+}
+
+void MainWindow::newSocketConnection()
+{
+    robot = server->nextPendingConnection();
+    disconnect(server,SIGNAL(newConnection()),this,SLOT(newSocketConnection()));
+    qDebug("new client");
+     QTextCodec::setCodecForCStrings(QTextCodec::codecForName("UTF-8"));
+    ui->label_state->setText("已连接");
+    connect(robot,SIGNAL(readyRead()),this,SLOT(read_info()));
+    connect(robot,SIGNAL(disconnected()),this,SLOT(socket_disconnected()));
+}
+void MainWindow::read_info()
+{
+    qDebug("read_info");
+    QByteArray info= robot->readAll();
+    QString data=QString(info.data());
+    QStringList data_list= data.split('/');
+
+    int data_num=data_list.count();
+    qDebug("%d",data_num);
+    for(int i=0;i<data_num-1;i++)
+    {
+            qDebug(data_list.at(i).toLatin1().data());
+    }
+
+
+}
+
+
+void MainWindow::socket_disconnected()
+{
+    robot=NULL;
+    qDebug("disconneted slot");
+     QTextCodec::setCodecForCStrings(QTextCodec::codecForName("UTF-8"));
+     ui->label_state->setText("未连接");
+     connect(server,SIGNAL(newConnection()),this,SLOT(newSocketConnection()));//重新接受连接
+}
+
+
+
+void MainWindow::send_slot()
+{
+    qDebug("send slot");
+    if(robot==NULL)
+    {
+        QMessageBox::information(0,"error","has no robot");
+        return ;
+    }
+    if(table_id==0)
+    {
+        QMessageBox::information(0,"error","has no table need help");
+        return ;
+    }
+   unsigned char data[3]={0};
+   data[0]=48+table_id;
+   data[1]='1';//去1桌。
+   robot->write((char*)data,3);
+    qDebug("send");
+}
